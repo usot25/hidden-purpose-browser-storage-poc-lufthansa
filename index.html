@@ -1,0 +1,2514 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description"
+    content="How the consent test script writes to cookies, Web Storage, IndexedDB, Cache Storage and Service Workers, and how OneTrust script blocking controls each write." />
+  <meta name="theme-color" content="#F7F6F2" />
+  <title>Browser Storage Consent Test: Technical Reference</title>
+  <script>document.documentElement.classList.add('js');</script>
+  <style>
+    /* =========================================================
+   TOKENS — contrast verified on --paper (#F7F6F2):
+   ink 17.4:1 · ink-2 7.2:1 · accent 5.9:1 · line-ui 3.3:1
+   ========================================================= */
+    :root {
+      --paper: #F7F6F2;
+      --surface: #FFFFFF;
+      --surface-2: #EFECE5;
+      --ink: #151515;
+      --ink-2: #55524D;
+      --line: #D9D6CF;
+      --line-ui: #8A867F;
+      --accent: #B3261E;
+      --accent-soft: rgba(179, 38, 30, .08);
+      --code-bg: #1C1B19;
+      --code-ink: #EDEAE3;
+      --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      /* Fluid type: 320px → 1920px */
+      --t-sm: clamp(.875rem, .84rem + .15vw, .9375rem);
+      --t-base: clamp(1rem, .96rem + .2vw, 1.125rem);
+      --t-h3: clamp(1.125rem, 1.05rem + .35vw, 1.3rem);
+      --t-h2: clamp(1.5rem, 1.2rem + 1.3vw, 2.25rem);
+      --t-h1: clamp(2.1rem, 1.3rem + 3.6vw, 4.5rem);
+      /* Fluid space */
+      --gutter: clamp(1rem, .6rem + 2vw, 2.5rem);
+      --section: clamp(3rem, 2rem + 4vw, 6rem);
+      --header-h: 64px;
+      --ease: cubic-bezier(.16, 1, .3, 1);
+      --radius: 10px;
+    }
+
+    /* =========================================================
+   BASE
+   ========================================================= */
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box
+    }
+
+    html {
+      -webkit-text-size-adjust: 100%;
+      scroll-padding-top: calc(var(--header-h) + 1.25rem)
+    }
+
+    html.lenis,
+    html.lenis body {
+      height: auto
+    }
+
+    .lenis.lenis-smooth {
+      scroll-behavior: auto !important
+    }
+
+    .lenis.lenis-stopped {
+      overflow: hidden
+    }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: var(--t-base)/1.65 var(--font);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility
+    }
+
+    h1,
+    h2,
+    h3 {
+      line-height: 1.15;
+      letter-spacing: -.02em;
+      margin: 0
+    }
+
+    p,
+    li {
+      max-width: 72ch
+    }
+
+    a {
+      color: var(--accent);
+      text-underline-offset: .18em;
+      text-decoration-thickness: 1px;
+      transition: text-decoration-thickness .2s
+    }
+
+    a:hover {
+      text-decoration-thickness: 2px
+    }
+
+    code {
+      font: .9em var(--mono);
+      background: var(--surface-2);
+      padding: .1em .35em;
+      border-radius: 4px;
+      overflow-wrap: anywhere
+    }
+
+    button {
+      font: inherit;
+      color: inherit
+    }
+
+    ::selection {
+      background: var(--ink);
+      color: var(--paper)
+    }
+
+    /* Focus: 2px solid + offset, ≥3:1 against adjacent colours (2.4.7 / 2.4.13 guidance) */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+      border-radius: 4px
+    }
+
+    .on-dark :focus-visible,
+    pre:focus-visible {
+      outline-color: #FF8A80
+    }
+
+    :focus:not(:focus-visible) {
+      outline: none
+    }
+
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      border: 0
+    }
+
+    .skip-link {
+      position: fixed;
+      left: 1rem;
+      top: -100px;
+      z-index: 300;
+      background: var(--ink);
+      color: #fff;
+      padding: .75rem 1rem;
+      border-radius: 6px;
+      text-decoration: none;
+      font-weight: 600
+    }
+
+    .skip-link:focus {
+      top: 1rem
+    }
+
+    /* =========================================================
+   HEADER + READING PROGRESS
+   ========================================================= */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      height: var(--header-h);
+      display: flex;
+      align-items: center;
+      background: rgba(247, 246, 242, .88);
+      backdrop-filter: saturate(1.4) blur(12px);
+      -webkit-backdrop-filter: saturate(1.4) blur(12px);
+      border-bottom: 1px solid transparent;
+      transition: border-color .3s
+    }
+
+    .header.is-scrolled {
+      border-bottom-color: var(--line)
+    }
+
+    .header__inner {
+      width: 100%;
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: 0 var(--gutter);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: .6rem;
+      min-height: 44px;
+      font-weight: 650;
+      color: var(--ink);
+      text-decoration: none;
+      font-size: var(--t-sm);
+      letter-spacing: .01em
+    }
+
+    .brand__dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent)
+    }
+
+    .header__actions {
+      display: flex;
+      gap: .5rem;
+      align-items: center
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: .5rem;
+      min-height: 44px;
+      min-width: 44px;
+      padding: .5rem 1rem;
+      border: 1px solid var(--line-ui);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--ink);
+      font-size: var(--t-sm);
+      font-weight: 550;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background-color .2s, border-color .2s, transform .15s var(--ease)
+    }
+
+    .btn:hover {
+      border-color: var(--ink);
+      background: var(--surface-2)
+    }
+
+    .btn:active {
+      transform: scale(.97)
+    }
+
+    .btn--dark {
+      background: var(--ink);
+      color: #fff;
+      border-color: var(--ink)
+    }
+
+    .btn--dark:hover {
+      background: #000;
+      border-color: #000
+    }
+
+    .toc-btn {
+      display: inline-flex
+    }
+
+    @media (min-width:1100px) {
+      .toc-btn {
+        display: none
+      }
+    }
+
+    .progress {
+      position: absolute;
+      left: 0;
+      bottom: -1px;
+      height: 2px;
+      width: 100%;
+      background: var(--accent);
+      transform-origin: 0 50%;
+      transform: scaleX(var(--p, 0))
+    }
+
+    /* =========================================================
+   HERO — dynamic background + mouse-reactive spotlight
+   ========================================================= */
+    .hero {
+      position: relative;
+      overflow: hidden;
+      isolation: isolate;
+      padding: clamp(3rem, 2rem + 6vw, 8rem) var(--gutter) clamp(2.5rem, 2rem + 3vw, 5rem);
+      border-bottom: 1px solid var(--line)
+    }
+
+    .hero__bg {
+      position: absolute;
+      inset: -20%;
+      z-index: -2;
+      pointer-events: none
+    }
+
+    .blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(60px);
+      opacity: .55;
+      will-change: transform
+    }
+
+    .blob--1 {
+      width: 42vmax;
+      height: 42vmax;
+      left: -6%;
+      top: -10%;
+      background: radial-gradient(circle, #F2C6BF 0%, transparent 65%);
+      animation: drift1 26s ease-in-out infinite alternate
+    }
+
+    .blob--2 {
+      width: 36vmax;
+      height: 36vmax;
+      right: -4%;
+      top: 10%;
+      background: radial-gradient(circle, #E3DDF0 0%, transparent 65%);
+      animation: drift2 32s ease-in-out infinite alternate
+    }
+
+    .blob--3 {
+      width: 30vmax;
+      height: 30vmax;
+      left: 35%;
+      bottom: -20%;
+      background: radial-gradient(circle, #D6E6DD 0%, transparent 65%);
+      animation: drift3 28s ease-in-out infinite alternate
+    }
+
+    @keyframes drift1 {
+      to {
+        transform: translate3d(8vw, 6vh, 0) scale(1.08)
+      }
+    }
+
+    @keyframes drift2 {
+      to {
+        transform: translate3d(-6vw, 8vh, 0) scale(.94)
+      }
+    }
+
+    @keyframes drift3 {
+      to {
+        transform: translate3d(-8vw, -6vh, 0) scale(1.1)
+      }
+    }
+
+    .hero__spot {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background: radial-gradient(420px circle at var(--mx, 70%) var(--my, 30%), rgba(179, 38, 30, .10), transparent 70%);
+      transition: opacity .4s;
+      opacity: 0
+    }
+
+    .hero:hover .hero__spot {
+      opacity: 1
+    }
+
+    .hero__grid {
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+      background-size: 56px 56px;
+      mask-image: radial-gradient(ellipse at 50% 0%, #000 20%, transparent 70%);
+      -webkit-mask-image: radial-gradient(ellipse at 50% 0%, #000 20%, transparent 70%);
+      opacity: .5
+    }
+
+    .hero__inner {
+      max-width: 1180px;
+      margin: 0 auto
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      font-size: var(--t-sm);
+      font-weight: 600;
+      color: var(--ink-2);
+      margin: 0 0 1.25rem;
+      padding: .35rem .8rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .7)
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent)
+    }
+
+    .hero h1 {
+      font-size: var(--t-h1);
+      font-weight: 650;
+      letter-spacing: -.035em;
+      line-height: 1.02;
+      max-width: 18ch;
+      text-wrap: balance
+    }
+
+    .hero__lead {
+      font-size: clamp(1.05rem, .95rem + .5vw, 1.35rem);
+      color: var(--ink-2);
+      margin: 1.25rem 0 2rem;
+      max-width: 60ch
+    }
+
+    .hero__cta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .75rem
+    }
+
+    /* Word reveal for H1 — real text stays in DOM */
+    .split .w {
+      display: inline-block;
+      overflow: hidden;
+      vertical-align: top;
+      padding-bottom: .1em;
+      margin-bottom: -.1em
+    }
+
+    .split .w>span {
+      display: inline-block;
+      transform: translateY(105%);
+      transition: transform .9s var(--ease);
+      transition-delay: calc(var(--i)*35ms)
+    }
+
+    .split.is-in .w>span {
+      transform: none
+    }
+
+    /* =========================================================
+   MARQUEE — pausable (2.2.2)
+   ========================================================= */
+    .marquee {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+      padding: .75rem var(--gutter)
+    }
+
+    .marquee__viewport {
+      flex: 1;
+      overflow: hidden;
+      mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+      -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent)
+    }
+
+    .marquee__track {
+      display: flex;
+      width: max-content;
+      animation: marquee 40s linear infinite
+    }
+
+    .marquee__group {
+      display: flex;
+      gap: 2.25rem;
+      padding-right: 2.25rem;
+      white-space: nowrap;
+      font: 600 var(--t-sm)/1 var(--mono);
+      color: var(--ink-2)
+    }
+
+    .marquee__group span::before {
+      content: "◆";
+      color: var(--accent);
+      margin-right: .6rem;
+      font-size: .7em
+    }
+
+    .marquee:hover .marquee__track,
+    .marquee.is-paused .marquee__track {
+      animation-play-state: paused
+    }
+
+    @keyframes marquee {
+      to {
+        transform: translateX(-50%)
+      }
+    }
+
+    /* =========================================================
+   LAYOUT — mobile-first, sidebar from 1100px
+   ========================================================= */
+    .layout {
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: 0 var(--gutter);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: clamp(2rem, 1rem + 3vw, 5rem)
+    }
+
+    @media (min-width:1100px) {
+      .layout {
+        grid-template-columns: 260px minmax(0, 1fr)
+      }
+    }
+
+    @media (min-width:1600px) {
+      .layout {
+        grid-template-columns: 300px minmax(0, 1fr) 200px
+      }
+    }
+
+    .content {
+      min-width: 0;
+      max-width: 900px;
+      padding-bottom: var(--section)
+    }
+
+    @media (min-width:1600px) {
+      .content {
+        max-width: 980px
+      }
+    }
+
+    /* Sidebar TOC */
+    .sidebar {
+      display: none
+    }
+
+    @media (min-width:1100px) {
+      .sidebar {
+        display: block;
+        position: sticky;
+        top: calc(var(--header-h) + 2rem);
+        align-self: start;
+        max-height: calc(100vh - var(--header-h) - 3rem);
+        overflow: auto;
+        padding: 2.5rem 0 2rem;
+        overscroll-behavior: contain
+      }
+    }
+
+    .toc__title {
+      font-size: var(--t-sm);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--ink-2);
+      margin: 0 0 .75rem
+    }
+
+    .toc ol {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      border-left: 1px solid var(--line)
+    }
+
+    .toc a {
+      position: relative;
+      display: flex;
+      gap: .6rem;
+      align-items: baseline;
+      min-height: 36px;
+      padding: .4rem .9rem;
+      color: var(--ink-2);
+      text-decoration: none;
+      font-size: var(--t-sm);
+      line-height: 1.35;
+      transition: color .2s
+    }
+
+    .toc a::before {
+      content: "";
+      position: absolute;
+      left: -1px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--accent);
+      transform: scaleY(0);
+      transition: transform .35s var(--ease)
+    }
+
+    .toc a:hover {
+      color: var(--ink)
+    }
+
+    .toc a[aria-current="true"] {
+      color: var(--ink);
+      font-weight: 600
+    }
+
+    .toc a[aria-current="true"]::before {
+      transform: scaleY(1)
+    }
+
+    .toc__no {
+      font: 500 .78rem var(--mono);
+      color: var(--ink-2);
+      min-width: 1.5rem
+    }
+
+    /* Mobile/tablet TOC drawer (modal dialog) */
+    .drawer {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      visibility: hidden
+    }
+
+    .drawer.is-open {
+      visibility: visible
+    }
+
+    .drawer__scrim {
+      position: absolute;
+      inset: 0;
+      background: rgba(21, 21, 21, .45);
+      opacity: 0;
+      transition: opacity .35s
+    }
+
+    .drawer.is-open .drawer__scrim {
+      opacity: 1
+    }
+
+    .drawer__panel {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(88vw, 380px);
+      background: var(--paper);
+      box-shadow: -20px 0 60px rgba(0, 0, 0, .15);
+      transform: translateX(100%);
+      transition: transform .45s var(--ease);
+      display: flex;
+      flex-direction: column
+    }
+
+    .drawer.is-open .drawer__panel {
+      transform: none
+    }
+
+    .drawer__head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--line)
+    }
+
+    .drawer__head h2 {
+      font-size: 1.1rem
+    }
+
+    .drawer__body {
+      overflow: auto;
+      padding: 1rem 1.25rem 2rem;
+      overscroll-behavior: contain
+    }
+
+    .drawer .toc a {
+      min-height: 44px
+    }
+
+    /* Right rail (ultrawide only) */
+    .rail {
+      display: none
+    }
+
+    @media (min-width:1600px) {
+      .rail {
+        display: block;
+        position: sticky;
+        top: calc(var(--header-h) + 2.5rem);
+        align-self: start;
+        padding-top: 2.5rem;
+        font-size: var(--t-sm);
+        color: var(--ink-2)
+      }
+    }
+
+    .rail strong {
+      display: block;
+      color: var(--ink);
+      font-size: 2rem;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -.03em
+    }
+
+    /* =========================================================
+   CONTENT TYPOGRAPHY
+   ========================================================= */
+    section.doc {
+      padding-top: var(--section)
+    }
+
+    section.doc+section.doc {
+      border-top: 1px solid var(--line);
+      margin-top: var(--section)
+    }
+
+    .doc h2 {
+      font-size: var(--t-h2);
+      font-weight: 650;
+      display: flex;
+      gap: .75rem;
+      align-items: baseline;
+      margin-bottom: 1.25rem
+    }
+
+    .doc h2 .no {
+      font: 500 .5em var(--mono);
+      color: var(--accent);
+      padding: .3em .55em;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      transform: translateY(-.3em)
+    }
+
+    .doc h3 {
+      font-size: var(--t-h3);
+      font-weight: 650;
+      margin: 2.25rem 0 .6rem
+    }
+
+    .doc p {
+      margin: 0 0 1rem
+    }
+
+    .doc ul,
+    .doc ol {
+      padding-left: 1.25rem;
+      margin: 0 0 1rem
+    }
+
+    .doc li {
+      margin: .3rem 0
+    }
+
+    .doc li::marker {
+      color: var(--accent)
+    }
+
+    .anchor {
+      opacity: 0;
+      margin-left: .25rem;
+      color: var(--ink-2);
+      text-decoration: none;
+      font-weight: 400;
+      font-size: .7em;
+      transition: opacity .2s
+    }
+
+    .doc h2:hover .anchor,
+    .anchor:focus-visible {
+      opacity: 1
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .4rem;
+      margin: 0 0 1rem;
+      padding: 0;
+      list-style: none
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: .1rem .6rem;
+      border-radius: 999px;
+      background: var(--ink);
+      color: #fff;
+      font: 600 .78rem var(--mono)
+    }
+
+    .tag--muted {
+      background: var(--surface-2);
+      color: var(--ink);
+      border: 1px solid var(--line-ui)
+    }
+
+    .note {
+      position: relative;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--accent);
+      background: var(--surface);
+      padding: 1rem 1.25rem;
+      margin: 1.5rem 0;
+      border-radius: 0 var(--radius) var(--radius) 0
+    }
+
+    .note p {
+      margin: 0
+    }
+
+    /* Tables — scroll region is keyboard focusable (2.1.1) */
+    .table-wrap {
+      overflow-x: auto;
+      margin: 1.25rem 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface)
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--t-sm);
+      min-width: 560px
+    }
+
+    caption {
+      text-align: left;
+      font-weight: 650;
+      padding: .8rem 1rem;
+      border-bottom: 1px solid var(--line)
+    }
+
+    th,
+    td {
+      text-align: left;
+      vertical-align: top;
+      padding: .7rem 1rem;
+      border-bottom: 1px solid var(--line)
+    }
+
+    tr:last-child>* {
+      border-bottom: 0
+    }
+
+    thead th {
+      background: var(--surface-2);
+      font-weight: 650
+    }
+
+    tbody th {
+      font-weight: 600
+    }
+
+    tbody tr {
+      transition: background-color .2s
+    }
+
+    tbody tr:hover {
+      background: var(--accent-soft)
+    }
+
+    /* Code blocks with copy button */
+    .code {
+      position: relative;
+      margin: 1.25rem 0
+    }
+
+    .code pre {
+      margin: 0;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      padding: 1.1rem 1.25rem;
+      padding-top: 2.9rem;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      font: .875rem/1.6 var(--mono);
+      tab-size: 2
+    }
+
+    .code pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+      font: inherit;
+      overflow-wrap: normal
+    }
+
+    .code__bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: .45rem .5rem .45rem 1.1rem;
+      color: #BDB8AE;
+      font: 600 .75rem var(--mono);
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      border-bottom: 1px solid rgba(255, 255, 255, .08)
+    }
+
+    .copy {
+      min-height: 36px;
+      min-width: 44px;
+      padding: .3rem .8rem;
+      border: 1px solid rgba(237, 234, 227, .35);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--code-ink);
+      font: 600 .78rem var(--font);
+      cursor: pointer;
+      transition: background-color .2s, border-color .2s
+    }
+
+    .copy:hover {
+      background: rgba(255, 255, 255, .08);
+      border-color: rgba(237, 234, 227, .7)
+    }
+
+    .copy:focus-visible {
+      outline-color: #FF8A80
+    }
+
+    .copy.is-done {
+      border-color: #7FD1A3;
+      color: #B7F0CF
+    }
+
+    /* Storage cards with spotlight */
+    .cards {
+      list-style: none;
+      padding: 0;
+      margin: 1.5rem 0;
+      display: grid;
+      gap: .75rem;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr))
+    }
+
+    .card {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      transition: border-color .25s, transform .35s var(--ease), box-shadow .35s var(--ease)
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(260px circle at var(--mx, 50%) var(--my, 50%), rgba(179, 38, 30, .10), transparent 70%);
+      opacity: 0;
+      transition: opacity .3s
+    }
+
+    .card:hover {
+      border-color: var(--line-ui);
+      transform: translateY(-3px);
+      box-shadow: 0 12px 30px -16px rgba(0, 0, 0, .25)
+    }
+
+    .card:hover::before {
+      opacity: 1
+    }
+
+    .card a {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: .35rem;
+      height: 100%;
+      padding: 1.1rem 1.15rem;
+      color: var(--ink);
+      text-decoration: none
+    }
+
+    .card a::after {
+      content: "→";
+      position: absolute;
+      right: 1rem;
+      top: 1rem;
+      color: var(--ink-2);
+      transition: transform .3s var(--ease), color .2s
+    }
+
+    .card:hover a::after {
+      transform: translateX(4px);
+      color: var(--accent)
+    }
+
+    .card__cat {
+      font: 600 .75rem var(--mono);
+      color: var(--accent)
+    }
+
+    .card__title {
+      font-weight: 650;
+      font-size: 1.05rem
+    }
+
+    .card__desc {
+      font-size: var(--t-sm);
+      color: var(--ink-2)
+    }
+
+    .card a:focus-visible {
+      outline-offset: -3px;
+      border-radius: var(--radius)
+    }
+
+    /* Steps */
+    .steps {
+      counter-reset: s;
+      list-style: none;
+      padding: 0 !important
+    }
+
+    .steps li {
+      counter-increment: s;
+      position: relative;
+      padding: .2rem 0 .9rem 3rem;
+      margin: 0
+    }
+
+    .steps li::before {
+      content: counter(s);
+      position: absolute;
+      left: 0;
+      top: .1rem;
+      width: 2rem;
+      height: 2rem;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--ink);
+      color: #fff;
+      font: 600 .85rem var(--mono)
+    }
+
+    .steps li::after {
+      content: "";
+      position: absolute;
+      left: calc(1rem - .5px);
+      top: 2.4rem;
+      bottom: .2rem;
+      width: 1px;
+      background: var(--line)
+    }
+
+    .steps li:last-child::after {
+      display: none
+    }
+
+    /* References */
+    .refs {
+      list-style: none;
+      padding: 0 !important;
+      display: grid;
+      gap: .5rem
+    }
+
+    .refs li {
+      margin: 0;
+      max-width: none
+    }
+
+    .refs a {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: center;
+      min-height: 48px;
+      padding: .65rem 1rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--ink);
+      text-decoration: none;
+      transition: border-color .2s, background-color .2s
+    }
+
+    .refs a:hover {
+      border-color: var(--accent);
+      background: var(--accent-soft)
+    }
+
+    .refs a span[aria-hidden] {
+      color: var(--accent);
+      transition: transform .3s var(--ease)
+    }
+
+    .refs a:hover span[aria-hidden] {
+      transform: translate(2px, -2px)
+    }
+
+    /* Footer */
+    .footer {
+      border-top: 1px solid var(--line);
+      background: var(--ink);
+      color: #EDEAE3
+    }
+
+    .footer__inner {
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: clamp(2.5rem, 2rem + 3vw, 5rem) var(--gutter);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      justify-content: space-between;
+      align-items: end
+    }
+
+    .footer p {
+      margin: 0;
+      color: #BDB8AE;
+      font-size: var(--t-sm);
+      max-width: 52ch
+    }
+
+    .footer strong {
+      display: block;
+      color: #fff;
+      font-size: var(--t-h2);
+      letter-spacing: -.02em;
+      margin-bottom: .5rem
+    }
+
+    .footer .btn {
+      background: transparent;
+      color: #fff;
+      border-color: rgba(237, 234, 227, .5)
+    }
+
+    .footer .btn:hover {
+      background: rgba(255, 255, 255, .08);
+      border-color: #fff
+    }
+
+    .footer :focus-visible {
+      outline-color: #FF8A80
+    }
+
+    /* =========================================================
+   REVEAL SYSTEM (JS-gated: content visible without JS)
+   ========================================================= */
+    .js [data-reveal] {
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity .7s var(--ease), transform .7s var(--ease);
+      transition-delay: calc(var(--d, 0)*70ms)
+    }
+
+    .js [data-reveal].is-in {
+      opacity: 1;
+      transform: none
+    }
+
+    /* =========================================================
+   REDUCED MOTION — static, nothing hidden
+   ========================================================= */
+    @media (prefers-reduced-motion:reduce) {
+
+      *,
+      *::before,
+      *::after {
+        animation: none !important;
+        transition-duration: .001ms !important;
+        transition-delay: 0ms !important;
+        scroll-behavior: auto !important
+      }
+
+      .js [data-reveal] {
+        opacity: 1 !important;
+        transform: none !important
+      }
+
+      .split .w>span {
+        transform: none !important
+      }
+
+      .marquee__track {
+        flex-wrap: wrap;
+        width: auto
+      }
+
+      .marquee__group[aria-hidden="true"],
+      .marquee__toggle {
+        display: none
+      }
+
+      .marquee__group {
+        flex-wrap: wrap;
+        white-space: normal;
+        row-gap: .6rem
+      }
+
+      .marquee__viewport {
+        mask-image: none;
+        -webkit-mask-image: none
+      }
+
+      .hero__spot {
+        display: none
+      }
+
+      .card:hover {
+        transform: none
+      }
+    }
+
+    @media (forced-colors:active) {
+
+      .btn,
+      .copy,
+      .card,
+      .refs a,
+      .table-wrap {
+        border: 1px solid ButtonText
+      }
+
+      .progress {
+        background: Highlight
+      }
+
+      .toc a[aria-current="true"] {
+        text-decoration: underline
+      }
+    }
+
+    @media print {
+
+      .header,
+      .sidebar,
+      .drawer,
+      .marquee,
+      .hero__bg,
+      .hero__spot,
+      .hero__grid,
+      .rail,
+      .copy,
+      .footer .btn {
+        display: none !important
+      }
+
+      .js [data-reveal] {
+        opacity: 1;
+        transform: none
+      }
+
+      .layout {
+        display: block
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Helpers: no consent needed (not blocked) -->
+  <script>
+    const isHttps = location.protocol === "https:";
+
+    function setCookie(name, value, maxAge = 31536000) {
+      document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAge}; SameSite=Lax${isHttps ? "; Secure" : ""}`;
+    }
+
+    function safeStorage(storage, key, value) {
+      try {
+        storage.setItem(key, typeof value === "string" ? value : JSON.stringify(value));
+      } catch (e) {
+        console.warn(`Storage write failed for ${key}:`, e);
+      }
+    }
+
+    function writeIndexedDB(dbName, storeName, record) {
+      if (!("indexedDB" in window)) return;
+      const req = indexedDB.open(dbName, 1);
+      req.onupgradeneeded = (e) => e.target.result.createObjectStore(storeName, { keyPath: "id" });
+      req.onsuccess = (e) => {
+        const db = e.target.result;
+        const tx = db.transaction(storeName, "readwrite");
+        tx.objectStore(storeName).put(record);
+        tx.oncomplete = () => db.close();   // free the connection so deletion isn't blocked
+        tx.onerror = () => db.close();
+      };
+      req.onerror = (e) => console.warn("IndexedDB error:", e.target.error);
+    }
+  </script>
+
+  <!-- Performance (C0002) -->
+  <script type="text/plain" class="optanon-category-C0002">
+  setCookie("PerformanceCookie", "true");
+  safeStorage(localStorage, "PerformanceLocal", "Performance localStorage!");
+</script>
+
+  <!-- Functional (C0003) -->
+  <script type="text/plain" class="optanon-category-C0003">
+  setCookie("FunctionalCookie", "true");
+  safeStorage(sessionStorage, "FunctionalSession", "Functional sessionStorage!");
+</script>
+
+  <!-- Targeting (C0004) -->
+  <script type="text/plain" class="optanon-category-C0004">
+  setCookie("TargetingCookie", "true");
+  safeStorage(localStorage, "TargetingLocal", { id: 123, consent: true });
+  writeIndexedDB("TestDB", "TrackingStore", { id: "TargetingIDB", value: "Targeting IndexedDB!" });
+</script>
+
+  <!-- Social Media (C0005) -->
+  <script type="text/plain" class="optanon-category-C0005">
+  setCookie("SocialCookie", "true");
+  if ("caches" in window) {
+    caches.open("test-cache-v1")
+      .then((cache) => cache.put("/social-cache-entry",
+        new Response("Social Cache Storage!", { headers: { "Content-Type": "text/plain" } })))
+      .catch((e) => console.warn("Cache write failed:", e));
+  }
+</script>
+
+  <!-- Optional Service Worker -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js")
+        .catch((e) => console.warn("Service Worker registration failed:", e));
+    }
+  </script>
+
+
+  <a class="skip-link" href="#content">Skip to content</a>
+
+  <!-- ===================== HEADER ===================== -->
+  <header class="header" id="header">
+    <div class="header__inner">
+      <a class="brand" href="#top"><span class="brand__dot" aria-hidden="true"></span>Storage Consent Test</a>
+      <div class="header__actions">
+        <button class="btn toc-btn" id="tocBtn" type="button" aria-haspopup="dialog" aria-expanded="false"
+          aria-controls="drawer">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="M2 4h12M2 8h12M2 12h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+          Contents
+        </button>
+        <a class="btn btn--dark" href="#source">View script</a>
+      </div>
+    </div>
+    <div class="progress" id="progress" aria-hidden="true"></div>
+  </header>
+
+  <!-- Drawer TOC (mobile/tablet) -->
+  <div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" hidden>
+    <div class="drawer__scrim" data-close></div>
+    <div class="drawer__panel">
+      <div class="drawer__head">
+        <h2 id="drawerTitle">On this page</h2>
+        <button class="btn" type="button" data-close aria-label="Close contents">
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+            <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+      <nav class="drawer__body toc" aria-label="Page contents">
+        <ol data-toc></ol>
+      </nav>
+    </div>
+  </div>
+
+  <main id="content" tabindex="-1">
+    <span id="top"></span>
+
+    <!-- ===================== HERO ===================== -->
+    <section class="hero" id="heroSection" aria-labelledby="pageTitle">
+      <div class="hero__bg" id="heroBg" aria-hidden="true"><span class="blob blob--1"></span><span
+          class="blob blob--2"></span><span class="blob blob--3"></span></div>
+      <div class="hero__grid" aria-hidden="true"></div>
+      <div class="hero__spot" aria-hidden="true"></div>
+      <div class="hero__inner">
+        <p class="eyebrow" data-reveal>OneTrust CMP · Technical reference</p>
+        <h1 id="pageTitle" class="split" data-split>Browser Storage Consent Test</h1>
+        <p class="hero__lead" data-reveal style="--d:3">How the test script writes to each type of browser storage, what
+          each technology does, and how OneTrust consent categories control every write.</p>
+        <div class="hero__cta" data-reveal style="--d:4">
+          <a class="btn btn--dark" href="#overview">Start reading</a>
+          <a class="btn" href="#testing">Jump to testing</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== MARQUEE ===================== -->
+    <div class="marquee" id="marquee" role="region" aria-label="Technologies covered">
+      <div class="marquee__viewport">
+        <div class="marquee__track">
+          <div class="marquee__group">
+            <span>document.cookie</span><span>localStorage</span><span>sessionStorage</span><span>IndexedDB</span><span>CacheStorage</span><span>Service
+              Worker</span><span>optanon-category</span><span>Clear-Site-Data</span>
+          </div>
+          <div class="marquee__group" aria-hidden="true">
+            <span>document.cookie</span><span>localStorage</span><span>sessionStorage</span><span>IndexedDB</span><span>CacheStorage</span><span>Service
+              Worker</span><span>optanon-category</span><span>Clear-Site-Data</span>
+          </div>
+        </div>
+      </div>
+      <button class="btn marquee__toggle" id="marqueeToggle" type="button" aria-pressed="false">Pause</button>
+    </div>
+
+    <div class="layout">
+      <!-- Sidebar TOC (desktop) -->
+      <aside class="sidebar" aria-labelledby="tocTitle">
+        <p class="toc__title" id="tocTitle">On this page</p>
+        <nav class="toc" aria-labelledby="tocTitle">
+          <ol data-toc></ol>
+        </nav>
+      </aside>
+
+      <div class="content" id="docContent">
+
+        <!-- 1 ============================================================ -->
+        <section class="doc" id="overview" aria-labelledby="h-overview">
+          <h2 id="h-overview" data-reveal><span class="no">01</span>Overview</h2>
+          <p data-reveal>This test script writes sample data to each type of browser storage and ties every write to a
+            OneTrust consent category. That makes it easy to check whether the CMP blocks and allows each one correctly.
+          </p>
+
+          <h3 data-reveal>Summary</h3>
+          <p data-reveal>A helper script loads first and is never blocked. It defines three reusable functions: one sets
+            cookies with a one-year expiry and the <code>SameSite</code> and <code>Secure</code> attributes, one writes
+            to localStorage or sessionStorage and catches errors so a blocked storage doesn't stop the page, and one
+            adds a record to IndexedDB and then closes the connection so the database can be deleted later.</p>
+          <p data-reveal>The writes themselves are split into four script blocks, one per consent category. Each block
+            is set to <code>type="text/plain"</code>, so it only runs once the user consents to its category:</p>
+          <ul data-reveal>
+            <li><strong>Performance (C0002)</strong> sets <code>PerformanceCookie</code> and saves
+              <code>PerformanceLocal</code> in localStorage.
+            </li>
+            <li><strong>Functional (C0003)</strong> sets <code>FunctionalCookie</code> and saves
+              <code>FunctionalSession</code> in sessionStorage, which is cleared when the tab closes.
+            </li>
+            <li><strong>Targeting (C0004)</strong> sets <code>TargetingCookie</code>, saves <code>TargetingLocal</code>
+              as a JSON object in localStorage, and adds a record to the <code>TestDB</code> IndexedDB database.</li>
+            <li><strong>Social Media (C0005)</strong> sets <code>SocialCookie</code> and adds a test entry to the
+              <code>test-cache-v1</code> Cache Storage.
+            </li>
+          </ul>
+          <p data-reveal>A final, unblocked script registers an optional Service Worker (<code>/sw.js</code>). If the
+            file is missing, it logs a warning instead of failing silently.</p>
+          <p data-reveal>Consent only decides whether each block runs. Data that has already been written stays in the
+            browser after the user withdraws consent and has to be removed separately, for example with the
+            clear-storage script.</p>
+
+          <h3 data-reveal>Technologies covered</h3>
+          <ul class="cards" data-stagger>
+            <li class="card" data-reveal><a href="#cookies"><span class="card__cat">C0002–C0005</span><span
+                  class="card__title">Cookies</span><span class="card__desc">Sent to the server with every matching
+                  request.</span></a></li>
+            <li class="card" data-reveal><a href="#web-storage"><span class="card__cat">C0002 · C0003 ·
+                  C0004</span><span class="card__title">Web Storage</span><span class="card__desc">localStorage and
+                  sessionStorage string pairs.</span></a></li>
+            <li class="card" data-reveal><a href="#indexeddb"><span class="card__cat">C0004</span><span
+                  class="card__title">IndexedDB</span><span class="card__desc">Async database for structured
+                  data.</span></a></li>
+            <li class="card" data-reveal><a href="#cache-storage"><span class="card__cat">C0005</span><span
+                  class="card__title">Cache Storage</span><span class="card__desc">Stored Request/Response
+                  pairs.</span></a></li>
+            <li class="card" data-reveal><a href="#service-worker"><span class="card__cat">Not blocked</span><span
+                  class="card__title">Service Worker</span><span class="card__desc">Background script and network
+                  proxy.</span></a></li>
+          </ul>
+
+          <div class="table-wrap" data-reveal>
+            <table>
+              <caption>What each category writes</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Category</th>
+                  <th scope="col">Cookie</th>
+                  <th scope="col">Web Storage</th>
+                  <th scope="col">IndexedDB</th>
+                  <th scope="col">Cache Storage</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">C0002 Performance</th>
+                  <td><code>PerformanceCookie</code></td>
+                  <td>localStorage <code>PerformanceLocal</code></td>
+                  <td>—</td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <th scope="row">C0003 Functional</th>
+                  <td><code>FunctionalCookie</code></td>
+                  <td>sessionStorage <code>FunctionalSession</code></td>
+                  <td>—</td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <th scope="row">C0004 Targeting</th>
+                  <td><code>TargetingCookie</code></td>
+                  <td>localStorage <code>TargetingLocal</code> (JSON)</td>
+                  <td><code>TestDB</code> → <code>TrackingStore</code></td>
+                  <td>—</td>
+                </tr>
+                <tr>
+                  <th scope="row">C0005 Social Media</th>
+                  <td><code>SocialCookie</code></td>
+                  <td>—</td>
+                  <td>—</td>
+                  <td><code>test-cache-v1</code></td>
+                </tr>
+                <tr>
+                  <th scope="row">Not blocked</th>
+                  <td colspan="4">Helper functions and Service Worker registration (<code>/sw.js</code>)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 2 ============================================================ -->
+        <section class="doc" id="consent-blocking" aria-labelledby="h-consent">
+          <h2 id="h-consent" data-reveal><span class="no">02</span>How consent blocking works</h2>
+          <p data-reveal><strong>What it is.</strong> Browsers only execute a <code>&lt;script&gt;</code> whose
+            <code>type</code> is a JavaScript MIME type or is empty. Any other value, such as <code>text/plain</code>,
+            makes the browser treat the block as inert data. OneTrust uses this behaviour for <em>JavaScript type
+              rewriting</em>, its recommended manual blocking method: you mark a script as <code>text/plain</code> and
+            add a class naming its category, and OneTrust switches it to an executable type once that category has
+            consent.
+          </p>
+          <pre data-lang="HTML"><code>&lt;!-- Normal script: runs immediately --&gt;
+&lt;script type="text/javascript"&gt; code &lt;/script&gt;
+
+&lt;!-- Blocked until Performance (C0002) is allowed --&gt;
+&lt;script type="text/plain" class="optanon-category-C0002"&gt; code &lt;/script&gt;
+
+&lt;!-- External file, same pattern --&gt;
+&lt;script type="text/plain" class="optanon-category-C0004" src="/js/ads.js"&gt;&lt;/script&gt;
+
+&lt;!-- Needs several categories: all must be allowed --&gt;
+&lt;script type="text/plain" class="optanon-category-C0002-C0004"&gt; code &lt;/script&gt;</code></pre>
+
+          <h3 data-reveal>Default category IDs</h3>
+          <div class="table-wrap" data-reveal>
+            <table>
+              <caption>OneTrust default cookie categories</caption>
+              <thead>
+                <tr>
+                  <th scope="col">ID</th>
+                  <th scope="col">Category</th>
+                  <th scope="col">Typical examples</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>C0001</code></td>
+                  <td>Strictly Necessary</td>
+                  <td>Session, load balancing, the consent cookie itself</td>
+                </tr>
+                <tr>
+                  <td><code>C0002</code></td>
+                  <td>Performance</td>
+                  <td>Analytics, e.g. Google Analytics</td>
+                </tr>
+                <tr>
+                  <td><code>C0003</code></td>
+                  <td>Functional</td>
+                  <td>Language selection, chat widgets</td>
+                </tr>
+                <tr>
+                  <td><code>C0004</code></td>
+                  <td>Targeting</td>
+                  <td>Advertising, remarketing pixels</td>
+                </tr>
+                <tr>
+                  <td><code>C0005</code></td>
+                  <td>Social Media</td>
+                  <td>Share buttons, embedded social content</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="note" data-reveal>
+            <p><strong>Key point:</strong> a CMP can't block a cookie or storage write directly. It blocks the
+              <em>script</em> that performs the write. Any write placed outside a blocked script, for example in the
+              helper block, runs regardless of consent.
+            </p>
+          </div>
+
+          <h3 data-reveal>Use cases</h3>
+          <ul data-reveal>
+            <li>Hard-coded inline scripts that Auto-Blocking doesn't recognise.</li>
+            <li>First-party custom scripts that write to localStorage, IndexedDB or Cache Storage.</li>
+            <li>Testing that each category is enforced on its own before a production rollout.</li>
+          </ul>
+          <p data-reveal>Don't combine manual blocking and Auto-Blocking on the same script. Use one method per source.
+          </p>
+        </section>
+
+        <!-- 3 ============================================================ -->
+        <section class="doc" id="helpers" aria-labelledby="h-helpers">
+          <h2 id="h-helpers" data-reveal><span class="no">03</span>The helper script</h2>
+          <p data-reveal>The helper block only <em>defines</em> functions and stores nothing, so it can safely run
+            without consent. Its functions are global, so the category blocks can call them once OneTrust unblocks them.
+          </p>
+          <div class="table-wrap" data-reveal>
+            <table>
+              <caption>Helper functions</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Function</th>
+                  <th scope="col">What it does</th>
+                  <th scope="col">Why it's built this way</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>isHttps</code></td>
+                  <td>Checks <code>location.protocol</code></td>
+                  <td>Lets <code>Secure</code> be added only on HTTPS, so the test still works on
+                    <code>http://localhost</code>.
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>setCookie()</code></td>
+                  <td>Writes a cookie with <code>path=/</code>, a one-year <code>max-age</code>,
+                    <code>SameSite=Lax</code> and conditional <code>Secure</code>
+                  </td>
+                  <td>Encodes the value with <code>encodeURIComponent</code> so semicolons, commas or spaces can't break
+                    the cookie string.</td>
+                </tr>
+                <tr>
+                  <td><code>safeStorage()</code></td>
+                  <td>Writes to localStorage or sessionStorage inside <code>try/catch</code></td>
+                  <td>Storage can throw (quota full, or storage disabled). Catching the error keeps the rest of the page
+                    running. Objects are converted with <code>JSON.stringify</code> because Web Storage only stores
+                    strings.</td>
+                </tr>
+                <tr>
+                  <td><code>writeIndexedDB()</code></td>
+                  <td>Opens a database, creates the store on first run, writes one record and closes the connection</td>
+                  <td>An open connection blocks <code>indexedDB.deleteDatabase()</code>. Closing it lets the
+                    clear-storage script delete the database.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 4 ============================================================ -->
+        <section class="doc" id="cookies" aria-labelledby="h-cookies">
+          <h2 id="h-cookies" data-reveal><span class="no">04</span>Cookies</h2>
+          <ul class="tags" aria-label="Categories" data-reveal>
+            <li class="tag">C0002</li>
+            <li class="tag">C0003</li>
+            <li class="tag">C0004</li>
+            <li class="tag">C0005</li>
+          </ul>
+          <p data-reveal><strong>What it is.</strong> A cookie is a small name–value pair the browser stores and
+            <em>automatically sends to the server</em> with matching HTTP requests. Servers set cookies with the
+            <code>Set-Cookie</code> response header. Scripts read and write them through <code>document.cookie</code>,
+            which acts as a getter and setter. Each assignment sets or updates only one cookie.
+          </p>
+
+          <h3 data-reveal>Attributes used in the test</h3>
+          <div class="table-wrap" data-reveal>
+            <table>
+              <caption>Cookie attributes</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Attribute</th>
+                  <th scope="col">Meaning</th>
+                  <th scope="col">Value in test</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>path</code></td>
+                  <td>URL path the cookie applies to. <code>/</code> means the whole site.</td>
+                  <td><code>/</code></td>
+                </tr>
+                <tr>
+                  <td><code>max-age</code></td>
+                  <td>Lifetime in seconds, relative to now. Takes precedence over <code>expires</code>. Without either,
+                    the cookie is a <em>session cookie</em> and is removed when the browser closes.</td>
+                  <td><code>31536000</code> (one year)</td>
+                </tr>
+                <tr>
+                  <td><code>SameSite</code></td>
+                  <td><code>Strict</code> sends the cookie only in same-site contexts. <code>Lax</code> also sends it on
+                    top-level navigations <em>to</em> the site. <code>None</code> sends it everywhere and requires
+                    <code>Secure</code>.
+                  </td>
+                  <td><code>Lax</code></td>
+                </tr>
+                <tr>
+                  <td><code>Secure</code></td>
+                  <td>Only sent over HTTPS.</td>
+                  <td>Added on HTTPS only</td>
+                </tr>
+                <tr>
+                  <td><code>domain</code></td>
+                  <td>If omitted, the cookie is sent to the current host only, with no subdomains. If set, subdomains
+                    are included.</td>
+                  <td>Omitted (host-only)</td>
+                </tr>
+                <tr>
+                  <td><code>HttpOnly</code></td>
+                  <td>Hides the cookie from JavaScript. It can only be set by the server.</td>
+                  <td>Not used</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 data-reveal>Examples</h3>
+          <pre data-lang="JavaScript"><code>// Set
+document.cookie = "theme=dark; path=/; max-age=2592000; SameSite=Lax; Secure";
+
+// Read one cookie
+const theme = document.cookie.split("; ").find(c =&gt; c.startsWith("theme="))?.split("=")[1];
+
+// Delete: same name, path and domain, with max-age=0
+document.cookie = "theme=; path=/; max-age=0";
+
+// Server-side equivalent (HTTP header)
+// Set-Cookie: theme=dark; Path=/; Max-Age=2592000; SameSite=Lax; Secure</code></pre>
+
+          <h3 data-reveal>Use cases</h3>
+          <ul data-reveal>
+            <li>Session and login state (usually <code>HttpOnly</code>, set by the server).</li>
+            <li>Analytics identifiers such as <code>_ga</code> (Performance).</li>
+            <li>Language or region preference (Functional).</li>
+            <li>Advertising and remarketing IDs (Targeting).</li>
+            <li>Storing the consent decision itself, for example OneTrust's <code>OptanonConsent</code>.</li>
+          </ul>
+          <div class="note" data-reveal>
+            <p><strong>Testing tip:</strong> to delete a cookie, you must match its <code>path</code> and
+              <code>domain</code> exactly. A cookie set with <code>domain=.example.com</code> won't be removed by a
+              delete that omits the domain. This is a common reason cookies "survive" consent withdrawal.
+            </p>
+          </div>
+        </section>
+
+        <!-- 5 ============================================================ -->
+        <section class="doc" id="web-storage" aria-labelledby="h-webstorage">
+          <h2 id="h-webstorage" data-reveal><span class="no">05</span>localStorage and sessionStorage</h2>
+          <ul class="tags" aria-label="Categories" data-reveal>
+            <li class="tag">C0002</li>
+            <li class="tag">C0003</li>
+            <li class="tag">C0004</li>
+          </ul>
+          <p data-reveal><strong>What it is.</strong> The Web Storage API is a simple, synchronous key–value store of
+            <em>strings</em>, scoped to the page's origin (scheme + host + port). Unlike cookies, its data is <em>never
+              sent to the server</em> automatically. Browsers typically allow around 5 MB per origin.
+          </p>
+          <div class="table-wrap" data-reveal>
+            <table>
+              <caption>localStorage vs sessionStorage</caption>
+              <thead>
+                <tr>
+                  <th scope="col"><span class="visually-hidden">Property</span></th>
+                  <th scope="col">localStorage</th>
+                  <th scope="col">sessionStorage</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Lifetime</th>
+                  <td>Persists until cleared by script or user</td>
+                  <td>Cleared when the tab or window closes</td>
+                </tr>
+                <tr>
+                  <th scope="row">Scope</th>
+                  <td>Shared by all tabs on the same origin</td>
+                  <td>Per tab and per origin</td>
+                </tr>
+                <tr>
+                  <th scope="row">Used in test for</th>
+                  <td><code>PerformanceLocal</code>, <code>TargetingLocal</code></td>
+                  <td><code>FunctionalSession</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 data-reveal>Examples</h3>
+          <pre data-lang="JavaScript"><code>localStorage.setItem("PerformanceLocal", "Performance localStorage!");
+localStorage.getItem("PerformanceLocal");          // "Performance localStorage!"
+
+// Objects must be serialised
+localStorage.setItem("TargetingLocal", JSON.stringify({ id: 123, consent: true }));
+JSON.parse(localStorage.getItem("TargetingLocal")).id; // 123
+
+sessionStorage.setItem("FunctionalSession", "Functional sessionStorage!");
+localStorage.removeItem("PerformanceLocal");       // delete one key
+localStorage.clear();                              // delete everything for this origin</code></pre>
+
+          <h3 data-reveal>Why the write is wrapped in try/catch</h3>
+          <p data-reveal><code>setItem()</code> can throw a <code>QuotaExceededError</code> when storage is full, and
+            accessing storage can throw a <code>SecurityError</code> when the user or browser has disabled it. Without
+            the <code>try/catch</code>, one failed write would stop every line after it in that script block.</p>
+
+          <h3 data-reveal>Use cases</h3>
+          <ul data-reveal>
+            <li>UI preferences such as theme or a dismissed notice (localStorage).</li>
+            <li>Multi-step form progress within one tab (sessionStorage).</li>
+            <li>Analytics or ad SDKs storing visitor IDs. This is why Web Storage falls under consent rules, just like
+              cookies.</li>
+          </ul>
+        </section>
+
+        <!-- 6 ============================================================ -->
+        <section class="doc" id="indexeddb" aria-labelledby="h-idb">
+          <h2 id="h-idb" data-reveal><span class="no">06</span>IndexedDB</h2>
+          <ul class="tags" aria-label="Categories" data-reveal>
+            <li class="tag">C0004</li>
+          </ul>
+          <p data-reveal><strong>What it is.</strong> IndexedDB is a low-level, asynchronous, transactional database in
+            the browser, designed for large amounts of structured data, including files and blobs. Instead of
+            fixed-column tables, it stores JavaScript objects in <em>object stores</em>, indexed by a key. Like other
+            web storage, it follows the same-origin policy.</p>
+
+          <h3 data-reveal>Key concepts used in the test</h3>
+          <ul data-reveal>
+            <li><strong><code>indexedDB.open(name, version)</code></strong> opens the database, or creates it if it
+              doesn't exist.</li>
+            <li><strong><code>onupgradeneeded</code></strong> runs when the database is created or its version
+              increases. It's the only place where you can create object stores.</li>
+            <li><strong><code>createObjectStore(name, { keyPath: "id" })</code></strong> creates a store that uses each
+              record's <code>id</code> as its key.</li>
+            <li><strong>Transactions</strong>: all reads and writes run inside one. <code>"readwrite"</code> allows
+              changes.</li>
+            <li><strong><code>put()</code></strong> inserts the record or replaces it if the key exists, so reloading
+              doesn't throw a duplicate-key error. <code>add()</code> would fail on the second run.</li>
+            <li><strong><code>db.close()</code></strong>: an open connection blocks <code>deleteDatabase()</code>.
+              Closing it lets the clear-storage script delete the database.</li>
+          </ul>
+
+          <h3 data-reveal>Example: read the test record back</h3>
+          <pre data-lang="JavaScript"><code>const req = indexedDB.open("TestDB", 1);
+req.onsuccess = (e) =&gt; {
+  const db = e.target.result;
+  const get = db.transaction("TrackingStore", "readonly")
+                .objectStore("TrackingStore").get("TargetingIDB");
+  get.onsuccess = () =&gt; { console.log(get.result); db.close(); };
+};
+
+// Delete the whole database
+const del = indexedDB.deleteDatabase("TestDB");
+del.onblocked = () =&gt; console.warn("Close other tabs using TestDB");</code></pre>
+
+          <h3 data-reveal>Use cases</h3>
+          <ul data-reveal>
+            <li>Offline data for Progressive Web Apps, such as catalogues or messages.</li>
+            <li>Large or binary data such as images and documents.</li>
+            <li>Third-party SDKs persisting identifiers or event queues. This is why the test ties it to Targeting.</li>
+          </ul>
+        </section>
+
+        <!-- 7 ============================================================ -->
+        <section class="doc" id="cache-storage" aria-labelledby="h-cache">
+          <h2 id="h-cache" data-reveal><span class="no">07</span>Cache Storage</h2>
+          <ul class="tags" aria-label="Categories" data-reveal>
+            <li class="tag">C0005</li>
+          </ul>
+          <p data-reveal><strong>What it is.</strong> Cache Storage stores pairs of HTTP <code>Request</code> and
+            <code>Response</code> objects in named caches. <code>window.caches</code> (a <code>CacheStorage</code>
+            object) acts as the directory of those caches. It's mostly used by Service Workers but is also available to
+            normal page scripts. It only works in secure contexts (HTTPS or <code>localhost</code>), and may be
+            unavailable in some private-browsing modes.
+          </p>
+          <div class="table-wrap" data-reveal>
+            <table>
+              <caption>Cache Storage methods</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Method</th>
+                  <th scope="col">Purpose</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>caches.open(name)</code></td>
+                  <td>Returns the named cache, creating it if needed</td>
+                </tr>
+                <tr>
+                  <td><code>cache.put(request, response)</code></td>
+                  <td>Stores a response for a request URL (used in the test)</td>
+                </tr>
+                <tr>
+                  <td><code>caches.match(request)</code></td>
+                  <td>Finds a stored response in any cache</td>
+                </tr>
+                <tr>
+                  <td><code>caches.keys()</code></td>
+                  <td>Lists all cache names</td>
+                </tr>
+                <tr>
+                  <td><code>caches.delete(name)</code></td>
+                  <td>Deletes a whole named cache</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 data-reveal>Examples</h3>
+          <pre data-lang="JavaScript"><code>// What the test writes: a synthetic response for a fake URL
+const cache = await caches.open("test-cache-v1");
+await cache.put("/social-cache-entry",
+  new Response("Social Cache Storage!", { headers: { "Content-Type": "text/plain" } }));
+
+// Read it back
+const res = await caches.match("/social-cache-entry");
+console.log(await res.text()); // "Social Cache Storage!"
+
+// Remove it
+await caches.delete("test-cache-v1");</code></pre>
+
+          <h3 data-reveal>Use cases</h3>
+          <ul data-reveal>
+            <li>Offline app shell: caching HTML, CSS, JavaScript and images.</li>
+            <li>Faster repeat visits with cache-first strategies.</li>
+            <li>Storing JSON API responses for offline use.</li>
+          </ul>
+        </section>
+
+        <!-- 8 ============================================================ -->
+        <section class="doc" id="service-worker" aria-labelledby="h-sw">
+          <h2 id="h-sw" data-reveal><span class="no">08</span>Service Workers</h2>
+          <ul class="tags" aria-label="Categories" data-reveal>
+            <li class="tag tag--muted">Not blocked</li>
+          </ul>
+          <p data-reveal><strong>What it is.</strong> A Service Worker is a script that the browser runs in the
+            background, separate from the page. It acts as a network proxy: it can intercept requests, serve responses
+            from Cache Storage, and handle push messages and background sync. It requires a secure context and controls
+            only pages within its <em>scope</em>, which by default is the folder the worker file is served from.</p>
+
+          <h3 data-reveal>Lifecycle</h3>
+          <ol class="steps" data-reveal>
+            <li><strong>Register</strong>: the page calls <code>navigator.serviceWorker.register("/sw.js")</code>.</li>
+            <li><strong>Install</strong>: often used to pre-cache files.</li>
+            <li><strong>Activate</strong>: often used to delete old caches.</li>
+            <li><strong>Fetch</strong>: intercepts the network requests of controlled pages.</li>
+          </ol>
+
+          <h3 data-reveal>Example: a minimal <code>/sw.js</code></h3>
+          <pre data-lang="JavaScript"><code>self.addEventListener("install", (e) =&gt; {
+  e.waitUntil(caches.open("app-shell-v1").then(c =&gt; c.addAll(["/", "/styles.css"])));
+});
+self.addEventListener("fetch", (e) =&gt; {
+  e.respondWith(caches.match(e.request).then(r =&gt; r || fetch(e.request)));
+});
+
+// Unregister every worker for this origin (run from the page)
+const regs = await navigator.serviceWorker.getRegistrations();
+await Promise.all(regs.map(r =&gt; r.unregister()));</code></pre>
+
+          <h3 data-reveal>Why it's relevant to consent</h3>
+          <p data-reveal>Registration in the test is <strong>not blocked</strong>, and a Service Worker runs outside the
+            page. It can write to Cache Storage or IndexedDB on its own, and OneTrust's <code>text/plain</code>
+            rewriting doesn't apply inside it. If a worker stores non-essential data, either block the registration
+            script with a category class, or check consent before the worker writes anything.</p>
+          <p data-reveal>If <code>/sw.js</code> doesn't exist, <code>register()</code> rejects and the
+            <code>.catch()</code> logs a warning instead of failing silently.
+          </p>
+        </section>
+
+        <!-- 9 ============================================================ -->
+        <section class="doc" id="comparison" aria-labelledby="h-compare">
+          <h2 id="h-compare" data-reveal><span class="no">09</span>Storage comparison</h2>
+          <div class="table-wrap" data-reveal>
+            <table>
+              <caption>Browser storage types compared</caption>
+              <thead>
+                <tr>
+                  <th scope="col"><span class="visually-hidden">Property</span></th>
+                  <th scope="col">Cookies</th>
+                  <th scope="col">localStorage</th>
+                  <th scope="col">sessionStorage</th>
+                  <th scope="col">IndexedDB</th>
+                  <th scope="col">Cache Storage</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Data type</th>
+                  <td>String</td>
+                  <td>String</td>
+                  <td>String</td>
+                  <td>Objects, blobs</td>
+                  <td>Request/Response</td>
+                </tr>
+                <tr>
+                  <th scope="row">Sent to server</th>
+                  <td>Yes, automatically</td>
+                  <td>No</td>
+                  <td>No</td>
+                  <td>No</td>
+                  <td>No</td>
+                </tr>
+                <tr>
+                  <th scope="row">Lifetime</th>
+                  <td><code>max-age</code>/<code>expires</code> or session</td>
+                  <td>Until cleared</td>
+                  <td>Until tab closes</td>
+                  <td>Until cleared or evicted</td>
+                  <td>Until cleared or evicted</td>
+                </tr>
+                <tr>
+                  <th scope="row">API style</th>
+                  <td>Sync string</td>
+                  <td>Sync</td>
+                  <td>Sync</td>
+                  <td>Async, events</td>
+                  <td>Async, Promises</td>
+                </tr>
+                <tr>
+                  <th scope="row">Typical capacity</th>
+                  <td>~4 KB per cookie</td>
+                  <td>~5 MB per origin</td>
+                  <td>~5 MB per origin</td>
+                  <td>Large, quota-based</td>
+                  <td>Large, quota-based</td>
+                </tr>
+                <tr>
+                  <th scope="row">In Service Worker</th>
+                  <td>No</td>
+                  <td>No</td>
+                  <td>No</td>
+                  <td>Yes</td>
+                  <td>Yes</td>
+                </tr>
+                <tr>
+                  <th scope="row">DevTools location</th>
+                  <td>Application → Cookies</td>
+                  <td>Application → Local storage</td>
+                  <td>Application → Session storage</td>
+                  <td>Application → IndexedDB</td>
+                  <td>Application → Cache storage</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p data-reveal>Capacity figures are approximate and vary by browser. See the MDN guide on storage quotas in <a
+              href="#references">References</a>.</p>
+        </section>
+
+        <!-- 10 ============================================================ -->
+        <section class="doc" id="withdrawal" aria-labelledby="h-withdraw">
+          <h2 id="h-withdraw" data-reveal><span class="no">10</span>Consent withdrawal and cleanup</h2>
+          <p data-reveal>Blocking controls whether a script <em>runs</em>. It doesn't undo what the script has already
+            written. When a user withdraws consent, existing data stays in the browser until it's deleted. A cleanup
+            script needs to handle each storage type separately:</p>
+          <pre data-lang="JavaScript"><code>async function clearCategory({ cookies = [], local = [], session = [], dbs = [], cachesToDrop = [] }) {
+  cookies.forEach(n =&gt; { document.cookie = `${n}=; path=/; max-age=0`; });
+  local.forEach(k =&gt; localStorage.removeItem(k));
+  session.forEach(k =&gt; sessionStorage.removeItem(k));
+  dbs.forEach(db =&gt; indexedDB.deleteDatabase(db));
+  if ("caches" in window) await Promise.all(cachesToDrop.map(c =&gt; caches.delete(c)));
+}
+
+// Example: user withdraws Targeting (C0004)
+clearCategory({ cookies: ["TargetingCookie"], local: ["TargetingLocal"], dbs: ["TestDB"] });</code></pre>
+          <p data-reveal>A common trigger is <code>OptanonWrapper()</code>, which OneTrust calls on load and whenever
+            consent changes. Check <code>OnetrustActiveGroups</code> there and clear data for any category that is no
+            longer active.</p>
+          <p data-reveal>The server-side alternative is the <code>Clear-Site-Data</code> response header. It can clear
+            cookies, storage and cache for the origin in one step, but it clears everything, not a single category.</p>
+          <div class="note" data-reveal>
+            <p><strong>Limits:</strong> JavaScript can't remove <code>HttpOnly</code> cookies or cookies set on another
+              domain, and it can't delete a cookie unless the <code>path</code> and <code>domain</code> match.
+              Third-party vendors' data on their own domains must be handled by those vendors.</p>
+          </div>
+        </section>
+
+        <!-- 11 ============================================================ -->
+        <section class="doc" id="testing" aria-labelledby="h-testing">
+          <h2 id="h-testing" data-reveal><span class="no">11</span>How to test</h2>
+          <ol class="steps" data-reveal>
+            <li>Open the page in a fresh private window, or clear site data first (DevTools → Application → Storage →
+              <em>Clear site data</em>).
+            </li>
+            <li><strong>Before interacting with the banner</strong> (opt-in model): only Strictly Necessary data should
+              exist, and none of the test keys should be present.</li>
+            <li><strong>Accept one category at a time</strong> in the Preference Center, and confirm that only that
+              category's items appear.</li>
+            <li><strong>Accept All</strong>: every item in the <a href="#overview">category table</a> should appear.
+            </li>
+            <li><strong>Withdraw a category</strong>: confirm the script no longer runs on reload, and that the cleanup
+              script removes the existing data.</li>
+            <li>In the console, check <code>OnetrustActiveGroups</code> and the <code>OptanonConsent</code> cookie's
+              <code>groups=</code> value against what you see in storage.
+            </li>
+            <li>Test on HTTPS. On plain HTTP, <code>Secure</code> is skipped, and Cache Storage and Service Workers
+              won't work, except on <code>localhost</code>.</li>
+          </ol>
+          <div class="table-wrap" data-reveal>
+            <table>
+              <caption>Expected results</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Scenario</th>
+                  <th scope="col">Expected result</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>No consent (opt-in)</td>
+                  <td>No test cookies, Web Storage keys, <code>TestDB</code> or <code>test-cache-v1</code></td>
+                </tr>
+                <tr>
+                  <td>Performance only</td>
+                  <td><code>PerformanceCookie</code> + <code>PerformanceLocal</code></td>
+                </tr>
+                <tr>
+                  <td>Functional only</td>
+                  <td><code>FunctionalCookie</code> + <code>FunctionalSession</code> (gone after closing the tab)</td>
+                </tr>
+                <tr>
+                  <td>Targeting only</td>
+                  <td><code>TargetingCookie</code> + <code>TargetingLocal</code> + <code>TestDB</code></td>
+                </tr>
+                <tr>
+                  <td>Social Media only</td>
+                  <td><code>SocialCookie</code> + <code>test-cache-v1</code></td>
+                </tr>
+                <tr>
+                  <td>Any state</td>
+                  <td>Service Worker registration is attempted (unblocked)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- 12 ============================================================ -->
+        <section class="doc" id="source" aria-labelledby="h-source">
+          <h2 id="h-source" data-reveal><span class="no">12</span>Full test script</h2>
+          <pre data-lang="HTML"><code>&lt;!-- Helpers: no consent needed (not blocked) --&gt;
+&lt;script&gt;
+  const isHttps = location.protocol === "https:";
+  function setCookie(name, value, maxAge = 31536000) {
+    document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAge}; SameSite=Lax${isHttps ? "; Secure" : ""}`;
+  }
+  function safeStorage(storage, key, value) {
+    try {
+      storage.setItem(key, typeof value === "string" ? value : JSON.stringify(value));
+    } catch (e) {
+      console.warn(`Storage write failed for ${key}:`, e);
+    }
+  }
+  function writeIndexedDB(dbName, storeName, record) {
+    if (!("indexedDB" in window)) return;
+    const req = indexedDB.open(dbName, 1);
+    req.onupgradeneeded = (e) =&gt; e.target.result.createObjectStore(storeName, { keyPath: "id" });
+    req.onsuccess = (e) =&gt; {
+      const db = e.target.result;
+      const tx = db.transaction(storeName, "readwrite");
+      tx.objectStore(storeName).put(record);
+      tx.oncomplete = () =&gt; db.close();   // free the connection so deletion isn't blocked
+      tx.onerror = () =&gt; db.close();
+    };
+    req.onerror = (e) =&gt; console.warn("IndexedDB error:", e.target.error);
+  }
+&lt;/script&gt;
+
+&lt;!-- Performance (C0002) --&gt;
+&lt;script type="text/plain" class="optanon-category-C0002"&gt;
+  setCookie("PerformanceCookie", "true");
+  safeStorage(localStorage, "PerformanceLocal", "Performance localStorage!");
+&lt;/script&gt;
+
+&lt;!-- Functional (C0003) --&gt;
+&lt;script type="text/plain" class="optanon-category-C0003"&gt;
+  setCookie("FunctionalCookie", "true");
+  safeStorage(sessionStorage, "FunctionalSession", "Functional sessionStorage!");
+&lt;/script&gt;
+
+&lt;!-- Targeting (C0004) --&gt;
+&lt;script type="text/plain" class="optanon-category-C0004"&gt;
+  setCookie("TargetingCookie", "true");
+  safeStorage(localStorage, "TargetingLocal", { id: 123, consent: true });
+  writeIndexedDB("TestDB", "TrackingStore", { id: "TargetingIDB", value: "Targeting IndexedDB!" });
+&lt;/script&gt;
+
+&lt;!-- Social Media (C0005) --&gt;
+&lt;script type="text/plain" class="optanon-category-C0005"&gt;
+  setCookie("SocialCookie", "true");
+  if ("caches" in window) {
+    caches.open("test-cache-v1")
+      .then((cache) =&gt; cache.put("/social-cache-entry",
+        new Response("Social Cache Storage!", { headers: { "Content-Type": "text/plain" } })))
+      .catch((e) =&gt; console.warn("Cache write failed:", e));
+  }
+&lt;/script&gt;
+
+&lt;!-- Optional Service Worker --&gt;
+&lt;script&gt;
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js")
+      .catch((e) =&gt; console.warn("Service Worker registration failed:", e));
+  }
+&lt;/script&gt;</code></pre>
+        </section>
+
+        <!-- 13 ============================================================ -->
+        <section class="doc" id="references" aria-labelledby="h-refs">
+          <h2 id="h-refs" data-reveal><span class="no">13</span>References</h2>
+          <p data-reveal>External links open in the same tab.</p>
+
+          <h3 data-reveal>OneTrust</h3>
+          <ul class="refs" data-reveal>
+            <li><a
+                href="https://docs.onetrust.com/en/consent--preferences/cookie-consent/managing-cookie-scripts-cookie-blocking-and-technical-implementation/client-side-cookie-management">Client-Side
+                Cookie Management: JavaScript type rewriting <span aria-hidden="true">↗</span></a></li>
+          </ul>
+
+          <h3 data-reveal>Cookies (MDN)</h3>
+          <ul class="refs" data-reveal>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/Document/cookie">Document: cookie property
+                <span aria-hidden="true">↗</span></a></li>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Cookies">Using HTTP cookies <span
+                  aria-hidden="true">↗</span></a></li>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie">Set-Cookie header <span
+                  aria-hidden="true">↗</span></a></li>
+            <li><a
+                href="https://developer.mozilla.org/en-US/docs/Web/Security/Practical_implementation_guides/Cookies">Secure
+                cookie configuration <span aria-hidden="true">↗</span></a></li>
+            <li><a
+                href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/encodeURIComponent">encodeURIComponent()
+                <span aria-hidden="true">↗</span></a></li>
+          </ul>
+
+          <h3 data-reveal>Web Storage (MDN)</h3>
+          <ul class="refs" data-reveal>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/Web_Storage_API">Web Storage API <span
+                  aria-hidden="true">↗</span></a></li>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage">Window: localStorage
+                <span aria-hidden="true">↗</span></a></li>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/Window/sessionStorage">Window: sessionStorage
+                <span aria-hidden="true">↗</span></a></li>
+          </ul>
+
+          <h3 data-reveal>IndexedDB (MDN)</h3>
+          <ul class="refs" data-reveal>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API">IndexedDB API <span
+                  aria-hidden="true">↗</span></a></li>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API/Using_IndexedDB">Using IndexedDB
+                <span aria-hidden="true">↗</span></a></li>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/IDBFactory/deleteDatabase">IDBFactory:
+                deleteDatabase() <span aria-hidden="true">↗</span></a></li>
+          </ul>
+
+          <h3 data-reveal>Cache Storage and Service Workers</h3>
+          <ul class="refs" data-reveal>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/CacheStorage">CacheStorage (MDN) <span
+                  aria-hidden="true">↗</span></a></li>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/Cache">Cache (MDN) <span
+                  aria-hidden="true">↗</span></a></li>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API">Service Worker API (MDN)
+                <span aria-hidden="true">↗</span></a></li>
+            <li><a
+                href="https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API/Using_Service_Workers">Using
+                Service Workers (MDN) <span aria-hidden="true">↗</span></a></li>
+            <li><a href="https://web.dev/learn/pwa/offline-data/">Offline data: Cache Storage vs IndexedDB (web.dev)
+                <span aria-hidden="true">↗</span></a></li>
+          </ul>
+
+          <h3 data-reveal>Storage limits, cleanup and script types</h3>
+          <ul class="refs" data-reveal>
+            <li><a
+                href="https://developer.mozilla.org/en-US/docs/Web/API/Storage_API/Storage_quotas_and_eviction_criteria">Storage
+                quotas and eviction criteria (MDN) <span aria-hidden="true">↗</span></a></li>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Clear-Site-Data">Clear-Site-Data
+                header (MDN) <span aria-hidden="true">↗</span></a></li>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTML/Element/script#type">The script element's
+                type attribute (MDN) <span aria-hidden="true">↗</span></a></li>
+            <li><a href="https://developer.chrome.com/docs/devtools/storage/">View and edit storage in Chrome DevTools
+                <span aria-hidden="true">↗</span></a></li>
+          </ul>
+        </section>
+
+      </div><!-- /content -->
+
+      <aside class="rail" aria-label="Reading progress">
+        <p>Read<strong id="pct">0%</strong></p>
+        <p id="railSection">Overview</p>
+      </aside>
+    </div>
+  </main>
+
+  <footer class="footer on-dark">
+    <div class="footer__inner">
+      <div>
+        <strong>Storage Consent Test</strong>
+        <p>Internal technical reference. Check product behaviour against the official OneTrust documentation before
+          sharing with customers.</p>
+      </div>
+      <button class="btn" type="button" id="toTop">Back to top <span aria-hidden="true">↑</span></button>
+    </div>
+  </footer>
+
+  <!-- Live region for copy feedback -->
+  <p class="visually-hidden" id="announcer" role="status" aria-live="polite"></p>
+
+  <!-- Lenis (~4 kB gz). Deferred; never initialised under reduced motion. -->
+  <script src="https://unpkg.com/lenis@1.1.13/dist/lenis.min.js" defer></script>
+  <script>
+    (() => {
+      const $ = (s, c = document) => c.querySelector(s);
+      const $$ = (s, c = document) => [...c.querySelectorAll(s)];
+      const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+      const fine = matchMedia('(hover: hover) and (pointer: fine)');
+      const announce = (msg) => { const a = $('#announcer'); a.textContent = ''; setTimeout(() => a.textContent = msg, 30); };
+
+      /* ---------- Build TOC from section headings (single source of truth) ---------- */
+      const sections = $$('section.doc');
+      const tocHTML = sections.map(s => {
+        const h = s.querySelector('h2'); const no = h.querySelector('.no')?.textContent || '';
+        const text = [...h.childNodes].filter(n => !(n.classList && n.classList.contains('no'))).map(n => n.textContent).join('').trim();
+        return `<li><a href="#${s.id}" data-spy="${s.id}"><span class="toc__no" aria-hidden="true">${no}</span><span>${text}</span></a></li>`;
+      }).join('');
+      $$('[data-toc]').forEach(ol => ol.innerHTML = tocHTML);
+
+      /* ---------- Heading anchor links ---------- */
+      sections.forEach(s => {
+        const h = s.querySelector('h2');
+        const a = document.createElement('a');
+        a.href = '#' + s.id; a.className = 'anchor'; a.textContent = '#';
+        a.setAttribute('aria-label', 'Link to this section');
+        h.append(a);
+      });
+
+      /* ---------- Code blocks: wrap, label, focusable scroll, copy button ---------- */
+      $$('pre').forEach((pre, i) => {
+        const lang = pre.dataset.lang || 'Code';
+        const fig = document.createElement('div'); fig.className = 'code'; fig.setAttribute('data-reveal', '');
+        pre.parentNode.insertBefore(fig, pre); fig.append(pre);
+        pre.tabIndex = 0; pre.setAttribute('role', 'region'); pre.setAttribute('aria-label', `${lang} example ${i + 1}`);
+        const bar = document.createElement('div'); bar.className = 'code__bar';
+        bar.innerHTML = `<span aria-hidden="true">${lang}</span><button type="button" class="copy">Copy<span class="visually-hidden"> ${lang} example ${i + 1}</span></button>`;
+        fig.prepend(bar);
+        const btn = bar.querySelector('.copy');
+        btn.addEventListener('click', async () => {
+          const text = pre.innerText;
+          try { await navigator.clipboard.writeText(text); }
+          catch { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.execCommand('copy'); s.removeAllRanges(); }
+          btn.firstChild.textContent = 'Copied'; btn.classList.add('is-done'); announce('Code copied to clipboard');
+          setTimeout(() => { btn.firstChild.textContent = 'Copy'; btn.classList.remove('is-done'); }, 2000);
+        });
+      });
+
+      /* ---------- Scrollable tables: keyboard-focusable named regions (2.1.1) ---------- */
+      $$('.table-wrap').forEach(w => {
+        const cap = w.querySelector('caption');
+        w.tabIndex = 0; w.setAttribute('role', 'region');
+        w.setAttribute('aria-label', (cap ? cap.textContent : 'Table') + ' (scrollable)');
+      });
+
+      /* ---------- Split H1 into words ---------- */
+      $$('[data-split]').forEach(el => {
+        const words = el.textContent.trim().split(/\s+/);
+        el.setAttribute('aria-label', el.textContent.trim());
+        el.innerHTML = words.map((w, i) => `<span class="w" aria-hidden="true"><span style="--i:${i}">${w}</span></span>`).join(' ');
+        requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('is-in')));
+      });
+
+      /* ---------- Staggered reveal (IntersectionObserver) ---------- */
+      $$('[data-stagger]').forEach(g => [...g.children].forEach((c, i) => c.style.setProperty('--d', i)));
+      const io = new IntersectionObserver((entries) => entries.forEach(e => {
+        if (e.isIntersecting) { e.target.classList.add('is-in'); io.unobserve(e.target); }
+      }), { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+      $$('[data-reveal]').forEach(el => io.observe(el));
+      // Safety net: anything already in view or focused must be visible
+      document.addEventListener('focusin', (e) => e.target.closest('[data-reveal]')?.classList.add('is-in'));
+
+      /* ---------- Header state, progress bar, rail ---------- */
+      const header = $('#header'), bar = $('#progress'), pct = $('#pct');
+      let ticking = false;
+      const onScroll = () => {
+        ticking = false;
+        const max = document.documentElement.scrollHeight - innerHeight;
+        const p = max > 0 ? Math.min(1, Math.max(0, scrollY / max)) : 0;
+        bar.style.setProperty('--p', p.toFixed(4)); pct.textContent = Math.round(p * 100) + '%';
+        header.classList.toggle('is-scrolled', scrollY > 8);
+        parallax();
+      };
+      addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(onScroll); } }, { passive: true });
+
+      /* ---------- Scroll-spy ---------- */
+      const spyLinks = () => $$('[data-spy]');
+      const spy = new IntersectionObserver((entries) => entries.forEach(e => {
+        if (!e.isIntersecting) return;
+        spyLinks().forEach(a => a.dataset.spy === e.target.id ? a.setAttribute('aria-current', 'true') : a.removeAttribute('aria-current'));
+        $('#railSection').textContent = e.target.querySelector('h2').childNodes[1]?.textContent.trim() || '';
+      }), { rootMargin: '-30% 0px -60% 0px' });
+      sections.forEach(s => spy.observe(s));
+
+      /* ---------- Hero: parallax blobs + mouse spotlight ---------- */
+      const hero = $('#heroSection'), heroBg = $('#heroBg');
+      function parallax() {
+        if (reduce.matches) return;
+        const r = hero.getBoundingClientRect(); if (r.bottom < 0) return;
+        heroBg.style.transform = `translate3d(0, ${scrollY * 0.25}px, 0)`;
+      }
+      hero.addEventListener('pointermove', (e) => {
+        if (!fine.matches || reduce.matches) return;
+        const r = hero.getBoundingClientRect();
+        hero.style.setProperty('--mx', (e.clientX - r.left) + 'px'); hero.style.setProperty('--my', (e.clientY - r.top) + 'px');
+      });
+      /* Card spotlight */
+      $$('.card').forEach(c => c.addEventListener('pointermove', (e) => {
+        if (!fine.matches) return;
+        const r = c.getBoundingClientRect();
+        c.style.setProperty('--mx', (e.clientX - r.left) + 'px'); c.style.setProperty('--my', (e.clientY - r.top) + 'px');
+      }));
+
+      /* ---------- Marquee pause (2.2.2) ---------- */
+      $('#marqueeToggle').addEventListener('click', (e) => {
+        const paused = $('#marquee').classList.toggle('is-paused');
+        e.currentTarget.setAttribute('aria-pressed', String(paused));
+        e.currentTarget.textContent = paused ? 'Play' : 'Pause';
+      });
+
+      /* ---------- Lenis smooth scrolling ---------- */
+      let lenis = null;
+      addEventListener('load', () => {
+        if (reduce.matches || typeof Lenis === 'undefined') return;
+        lenis = new Lenis({ duration: 1.05, easing: t => 1 - Math.pow(1 - t, 4), smoothWheel: true });
+        const raf = (t) => { lenis.raf(t); requestAnimationFrame(raf); }; requestAnimationFrame(raf);
+      });
+      reduce.addEventListener?.('change', (m) => { if (m.matches && lenis) { lenis.destroy(); lenis = null; } });
+
+      const headerOffset = () => -(header.offsetHeight + 20);
+      function goTo(target) {
+        if (lenis) lenis.scrollTo(target, { offset: headerOffset() });
+        else {
+          const y = target.getBoundingClientRect().top + scrollY + headerOffset();
+          scrollTo({ top: y, behavior: reduce.matches ? 'auto' : 'smooth' });
+        }
+      }
+      /* In-page links: smooth scroll + move focus to the target heading (2.4.3) */
+      document.addEventListener('click', (e) => {
+        const a = e.target.closest('a[href^="#"]'); if (!a) return;
+        const id = a.getAttribute('href').slice(1);
+        if (id === 'content') return; // let skip link behave natively
+        const target = id === 'top' ? $('#content') : document.getElementById(id);
+        if (!target) return;
+        e.preventDefault();
+        const fromDrawer = !!a.closest('#drawer');
+        if (fromDrawer) closeDrawer(false);
+        if (id === 'top') { lenis ? lenis.scrollTo(0) : scrollTo({ top: 0, behavior: reduce.matches ? 'auto' : 'smooth' }); }
+        else goTo(target);
+        const focusEl = target.matches('section') ? target.querySelector('h2') : target;
+        if (!focusEl.hasAttribute('tabindex')) focusEl.setAttribute('tabindex', '-1');
+        focusEl.closest('[data-reveal]')?.classList.add('is-in');
+        focusEl.focus({ preventScroll: true });
+        history.pushState(null, '', '#' + id);
+      });
+      $('#toTop').addEventListener('click', () => {
+        lenis ? lenis.scrollTo(0) : scrollTo({ top: 0, behavior: reduce.matches ? 'auto' : 'smooth' });
+        $('#content').focus({ preventScroll: true });
+      });
+
+      /* ---------- Contents drawer: modal dialog, focus trap, Esc, inert ---------- */
+      const drawer = $('#drawer'), tocBtn = $('#tocBtn');
+      const outside = [$('#content'), $('.footer'), $('.skip-link'), $('.brand'), $$('.header__actions .btn--dark')[0]];
+      function openDrawer() {
+        drawer.hidden = false;
+        requestAnimationFrame(() => drawer.classList.add('is-open'));
+        tocBtn.setAttribute('aria-expanded', 'true');
+        outside.forEach(el => el && (el.inert = true)); lenis?.stop();
+        document.body.style.overflow = 'hidden';
+        const current = drawer.querySelector('[aria-current="true"]') || drawer.querySelector('a');
+        setTimeout(() => current.focus(), 60);
+      }
+      function closeDrawer(returnFocus = true) {
+        if (drawer.hidden) return;
+        drawer.classList.remove('is-open');
+        tocBtn.setAttribute('aria-expanded', 'false');
+        outside.forEach(el => el && (el.inert = false)); lenis?.start();
+        document.body.style.overflow = '';
+        setTimeout(() => { drawer.hidden = true; }, reduce.matches ? 0 : 450);
+        if (returnFocus) tocBtn.focus();
+      }
+      tocBtn.addEventListener('click', openDrawer);
+      drawer.addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeDrawer(); });
+      document.addEventListener('keydown', (e) => {
+        if (drawer.hidden) return;
+        if (e.key === 'Escape') { e.preventDefault(); closeDrawer(); return; }
+        if (e.key !== 'Tab') return;
+        const f = $$('a[href], button:not([disabled])', drawer);
+        const first = f[0], last = f[f.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      });
+      matchMedia('(min-width: 1100px)').addEventListener('change', (m) => { if (m.matches) closeDrawer(false); });
+
+      onScroll();
+    })();
+  </script>
+</body>
+
+</html>
